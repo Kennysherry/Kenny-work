@@ -1,0 +1,458 @@
+---
+title: "Regions of mouce brain"
+output:
+  html_document:
+    df_print: paged
+    fig_caption: yes
+    number_sections: yes
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE,message=FALSE,warning=FALSE)
+```
+
+
+```{r, echo = FALSE, include = TRUE, message = F}
+# required packages
+library(R.matlab)
+library(tseries) # time series packages
+library(changepoint) # for change point detection
+library(dtw)
+library(TSdist)
+library(TSclust)
+library(dendextend)
+
+```
+
+# Introduction
+
+One of the key elements in understanding neural coding and computation is to identify similar spike-train patterns. For single neurons, similar spike patterns evoked by stimuli are evidence of common coding. Across multiple neurons, similar spike trains indicate potential cell assemblies. As recording technology advances, so does the urgent need for grouping methods to make sense of large-scale datasets of spike trains. In this paper, we are going to analyze whether neural activity is stationary during over the enire recording period, and whether the clusters are distinct from each other.
+
+
+## Background
+
+In this project, we analyze the neuralpixel data on one mouse (Krebs). There are two major datasets. The first dataset contains Neuropixel recordings in a mouse named Krebs during spontaneous activity. Eight-probe Neuropixels recordings in three mice of spontaneous activity. Each "spks" is a structure of length 8, where each entry is a different probe (these probes were recorded simultaneously). It contains the spike times and the cluster identity of each spike. The data has been processed using Matlab to reduce the size of the data. The data set contains the singular values and corresponding masks to reproduce the video. The original data set contains 500 singular values and masks. The reduced data set contains only first 50 singular values over time and their masks. Furthermore, the providers of the data set trimmed the video to only contain the face of the mouse. The second dataset is the spike-train data. We receive spike train records in each neuron in each brain region. 
+
+All the data is stored in a R object. It is a list object with 12 elements. The first element 'avgframe' is the average of the 39053 images. It is a 338 $\times$ 516 matrix. The second element is 'faceSVD'. It is a 50 $\times$ 39053 matrix. Each column represent the 50 singular values of a image in a certain time. The third element "motionMask" is a three dimension array with dimensions 338 $times$ 516 $times$ 50. It can be used to reproduced the video images based on the trimmed 50 singular values and the corresponding matrices. 
+
+The last nine elements contains spike trains of neurons in nine regions in the mouse brain. The nine regions are Caudate Putamen (CP), Frontal Motor Cortex (FrMoCtx), Hippocampal Formation (HPF), Lateral Septum (LS), Midbrain (MB), Superior Colliculus (SC), Somatomortor Cortex (SomMoCtx), Thalamus (TH), and Primary visual cortex(V1). For each element in the list corresponding to one of the nine brain region, the spike train is stored in a matrix of dimension $m$ $\times$ 39053. The first number, $m$, is the number of (estimated) neurons in that region. The second number, 39053, is the total number of 30-ms time windows in this recording. In other words, the recording lasts for 1171.59 seconds. Each entry in the matrix represents the number of spikes for one neuron in the corresponding time window.
+
+## Statistical questions of interest
+
+The primary scientific question of interest is to investigate whether the neural activity is stationary over the whole recording period. If not, we would to identify the point(s) at which the patterns of the spike trains change. 
+
+The secondary scientific question is to explore whether there exists regulatory relationship among neurons in each regions. 
+
+
+## Exploratory Data Analysis
+
+There are varies number of neurons in each brain region. For each neuron, the total number of time points is 39053. Each value record at one time point per one neuron is the number of spikes. It is hard to visualize all the time points at once. Therefore, we first visualize all the spike-train in a time frame window with 1000 points. The first 1000 spike-train in each region is given below. 
+
+```{r, echo = FALSE, include = TRUE, message = F}
+
+ephysroot = './../Neuralpixel/Data/'; # path of the data set 
+mstr = 'Krebs'; # mouse names
+### Load saved data:
+exp_data<- readMat(paste(ephysroot,mstr,'_reduced.mat',sep=''));
+
+brain_regions = names(exp_data)[-c(1:3)]
+n_time= dim(exp_data$faceSVD)[2];
+n_sv = dim(exp_data$faceSVD)[1];
+region.names = c(
+  "Caudate Putamen",
+  "Frontal Motor Cortex",
+  "Hippocampal Formation",
+  "Lateral Septum",
+  "Midbrain",
+  "Superior Colliculus",
+  "Somatomortor Cortex",
+  "Thalamus",
+  "Primary visual cortex"
+)
+
+
+### extract the spike train for one chosen region.
+
+# First 1000 points
+
+i_region = 1; # pick a region
+time_range = c(0, 1000); # Pick a time window (indices of time frame)
+
+par(mfrow=c(3,3))
+for (i in 1:9){
+### Extract the spike train for this region
+region_index = i
+spikes_this_region = exp_data[[brain_regions[region_index]]]
+
+### Visualize the spike train 
+n_neurons = dim(spikes_this_region)[1]; 
+plot(x=0,y=0,pch=16,col="white",type="l",
+     lwd=3,ylim=c(0,n_neurons),
+     xlim=time_range,cex.lab=1,cex.main=1,
+     ylab='Neuron',xlab='Time frame',main=paste(region.names[region_index], ': time frame 0-1000', sep='')) #yaxt='n',xaxt='n',
+
+for(i_neuron in 1:n_neurons){
+  spk_times = which(spikes_this_region[i_neuron,time_range[1]:time_range[2]]>0);
+  if (length(spk_times)>0){
+    points(y=rep(i_neuron,length(spk_times)),x=spk_times+time_range[1]-1,col="#000000",pch='.',cex=2)
+  }
+}
+}
+```
+
+Except brain region Caudate Putamen and Frontal Motor Cortex, we observe that the spike trains of neurons are missing at the beginning in each brain region. There is a latency time between the stimulus presentation and the first spike. For region Hippocampal Formation, it appears that groups of neurons start to have data on spike trains at different time. For example, the first 75 neurons in Hippocampal Formation starts to have spike trains recorded at time point 180. The next 100 neurons starts to have spike trains recorded at time point 650. Obviously the pattern of missing is systematic, so we can assume that it is missing due to the device is not ready to record the spike trains. Now, we are going to check the next 1000 time points. 
+
+```{r, echo = FALSE, include = TRUE, message = F}
+# Second 1000 points
+
+i_region = 1; # pick a region
+time_range = c(1001, 2000); # Pick a time window (indices of time frame)
+
+par(mfrow=c(3,3))
+for (i in 1:9){
+### Extract the spike train for this region
+region_index = i
+spikes_this_region = exp_data[[brain_regions[region_index]]]
+
+### Visualize the spike train 
+n_neurons = dim(spikes_this_region)[1]; 
+plot(x=0,y=0,pch=16,col="white",type="l",
+     lwd=3,ylim=c(0,n_neurons),
+     xlim=time_range,cex.lab=1,cex.main=1,
+     ylab='Neuron',xlab='Time frame',main=paste(region.names[region_index], ': time frame 1001-2000', sep='')) #yaxt='n',xaxt='n',
+
+for(i_neuron in 1:n_neurons){
+  spk_times = which(spikes_this_region[i_neuron,time_range[1]:time_range[2]]>0);
+  if (length(spk_times)>0){
+    points(y=rep(i_neuron,length(spk_times)),x=spk_times+time_range[1]-1,col="#000000",pch='.',cex=2)
+  }
+}
+}
+```
+
+In the second 1000 time points, we do not see a short period of missing spike trains in neuron. Therefore, we should just avoid the time period at the beginning. Now, if the spike trains are missing in the beginning, it is very likely that the missing pattern appears at the end of the experiment. We are going to inspect the last 1000 time points to confirm it. 
+
+```{r, echo = FALSE, include = TRUE, message = F}
+# Last 1000 points
+
+i_region = 1; # pick a region
+time_range = c(38054, 39053); # Pick a time window (indices of time frame)
+
+par(mfrow=c(3,3))
+for (i in 1:9){
+### Extract the spike train for this region
+region_index = i
+spikes_this_region = exp_data[[brain_regions[region_index]]]
+
+### Visualize the spike train 
+n_neurons = dim(spikes_this_region)[1]; 
+plot(x=0,y=0,pch=16,col="white",type="l",
+     lwd=3,ylim=c(0,n_neurons),
+     xlim=time_range,cex.lab=1,cex.main=1,
+     ylab='Neuron',xlab='Time frame',main=paste(region.names[region_index], ': time frame 38054-39053', sep=''))
+
+for(i_neuron in 1:n_neurons){
+  spk_times = which(spikes_this_region[i_neuron,time_range[1]:time_range[2]]>0);
+  if (length(spk_times)>0){
+    points(y=rep(i_neuron,length(spk_times)),x=spk_times+time_range[1]-1,col="#000000",pch='.',cex=2)
+  }
+}
+}
+
+```
+
+Again, we observe the short period of missing spike trains at the end of the experiment. Therefore, we will avoid this time period as well. According to the figures above, we decide to limit the analysis only in time range from 701 to 38600. After we reduce the data, the total number of time points per each neuron become 37900. In all the plots, the time point at 1 is actually referring to the actual time point at 701. The total number of neurons per region is given in the following table. 
+
+```{r, echo = FALSE, include = TRUE, message = F}
+
+# avoid missing spike trains time period
+
+regions = list()
+for (i in 1:9){
+  regions[[i]] = exp_data[[i+3]][,701:38600]
+}
+
+# total number of neurons per region
+num_neurons = sapply(regions, nrow)
+out = data.frame(Region = region.names, total.neurons = num_neurons)
+knitr::kable(out)
+
+```
+
+Now, we would like to inspect the summary statistics per region. First, we will take a look the average number of spikes at each time point per region. 
+
+```{r, echo = FALSE, include = TRUE, message = F}
+
+regions_avg_per_time = lapply(regions, function(x) apply(x, 2, mean))
+regions_avg_per_time_max = sapply(regions_avg_per_time, max)
+regions_avg_per_time_min = sapply(regions_avg_per_time, min)
+
+par(mfrow = c(3,3))
+for (i in 1:9){
+  plot(regions_avg_per_time[[i]], type = 'l', 
+       ylim = c(min(regions_avg_per_time_min), max(regions_avg_per_time_max)),
+       ylab = "Average Number of Spikes", 
+       xlab = "Time", 
+       main = region.names[i])
+}
+```
+
+The ACF plots for the average number of spikes at each time point per region. 
+
+```{r, echo = FALSE, include = TRUE, message = F}
+# ACF plot
+
+par(mfrow = c(3,3))
+for (i in 1:9){
+  acf(regions_avg_per_time[[i]], main = paste("ACF plot for average spike trains \n in Region:", region.names[i]))
+}
+
+```
+
+We perform the Augmented Dickey-Fuller Test for stationary. But all the p-values are less than 0. It means that we will reject the null hypothesis that the series is non-stationary time series. 
+In other words, the test cannot pick up the non-constant average spike counts around time point 25000. 
+
+```{r, echo = FALSE, include = TRUE, message = F}
+#library(aTSA)
+
+for (i in 1:9){
+#a = adf.test(regions_avg_per_time[[i]], alternative = c("stationary"))
+  #a = Box.test(regions_avg_per_time[[i]], type='Ljung-Box', lag = 20)
+  adf_test <- adf.test(regions_avg_per_time[[i]],alternative = 'stationary')
+#print(adf_test)
+#print(a$p.value)
+}
+
+for (i in 1:100){
+adf_test <- adf.test(regions[[1]][i,20000:30000],alternative = 'stationary')
+#print(adf_test)
+}
+
+for (i in 1:9){
+adf_test <- adf.test(regions_avg_per_time[[i]][25000:35000],alternative = 'stationary')
+#print(adf_test)
+}
+
+```
+
+The range of values of the average number of spikes for regions look quite difference. For instance, the average number of spikes per time in Caudate Putamen is generally lower than the average number of spikes per time in Midbrain. Also, most of the time midbrain receive spikes signal on average since the avearge number of spikes are above 0 in most of the time. We also notice that the pattern changes in all regions around the time 25000. It may have something happen around time point 25000. The reaction in the brains react differently to this certain event. The standard deviation of the number of spikes per time per region is provided below. 
+
+```{r, echo = FALSE, include = TRUE, message = F}
+
+regions_sd_per_time = lapply(regions, function(x) apply(x, 2, sd))
+regions_sd_per_time_max = sapply(regions_sd_per_time, max)
+regions_sd_per_time_min = sapply(regions_sd_per_time, min)
+
+par(mfrow = c(3,3))
+for (i in 1:9){
+  plot(regions_sd_per_time[[i]], type = 'l', 
+       ylim = c(min(regions_sd_per_time_min), max(regions_sd_per_time_max)),
+       ylab = "Standard Deviation of Number of Spikes", 
+       xlab = "Time", 
+       main = region.names[i])
+}
+
+```
+
+The variations per time look quite different in different regions. For example, the number of spikes per time among the neurons in Superior Colliculus seem to have the largest variation than other regions. The maximum of the number of spikes per time per region is provided below. 
+
+```{r, echo = FALSE, include = TRUE, message = F}
+
+regions_max_per_time = lapply(regions, function(x) apply(x, 2, max))
+regions_max_per_time_max = sapply(regions_max_per_time, max)
+regions_max_per_time_min = sapply(regions_max_per_time, min)
+
+par(mfrow = c(3,3))
+for (i in 1:9){
+  plot(regions_max_per_time[[i]], type = 'l', 
+       ylim = c(min(regions_max_per_time_min), max(regions_max_per_time_max)),
+       ylab = "Maximum of Number of Spikes", 
+       xlab = "Time", 
+       main = region.names[i])
+}
+
+```
+
+We can see there is an outlier in region Hippocampal Formation. The time occur is also near 25000. It seems that certain neuron in this brain region Hippocampal Formation is particularly sensitive to the event occur during this time. We found that it is the 144th neuron in Hippocampal Formation region. 
+
+```{r, echo = FALSE, include = TRUE, message = F}
+
+outlier_max = max(regions[[3]])
+outlier_locators = which(apply(regions[[3]], 1, function(x) any(x==outlier_max)))
+par(mfrow=c(1,1))
+ts.plot(regions[[3]][outlier_locators,], 
+        main = "Outlier neuron in Hippocampal Formation", 
+        ylab = "Number of Spikes")
+
+```
+
+## Cluster Analysis
+
+We begins by calculating a matrix of distances (dissimilarties) among all pairs of samples.
+In our case, we calculate the distance between two spikes trains.
+
+Before clustering has begun, each sample is considered a cluster, albeit a cluster containing a single sample
+Clustering begins by finding the two clusters that are most similar, based on the distance matrix , and merging them into a new, larger cluster
+characteristics of this new cluster are based on a combination of all the samples in that cluster
+
+
+```{r, echo = FALSE, include = TRUE, message = F}
+
+# calculate the distance between spikes trains
+
+# Euclidean distance (reasonable time)
+
+d.EUCL = list()
+for (i in 1:9){
+  print(i)
+  d.EUCL[[i]] = diss(regions[[i]], "EUCL")
+}
+
+# FRECHET distance (too long)
+
+# ACF distance
+
+d.ACF = list()
+for (i in 1:9){
+  print(i)
+  d.ACF[[i]] = diss(regions[[i]], "ACF")
+}
+
+# PACF distance
+
+d.PACF = list()
+for (i in 1:9){
+  print(i)
+  d.PACF[[i]] = diss(regions[[i]], "PACF")
+}
+
+# SPEC.LLR distance (too long)
+
+# SPEC.ISD distance (too long)
+
+## Create hierarchical clusterings
+
+# Euclidean
+
+hc.EUCL = list()
+
+for (i in 1:9){
+  hc.EUCL[[i]] = hclust(d.EUCL[[i]], method = "complete")
+}
+
+# ACF
+
+hc.ACF = list()
+
+for (i in 1:9){
+  hc.ACF[[i]] = hclust(d.ACF[[i]], method = "complete")
+}
+
+# PACF
+
+hc.PACF = list()
+
+for (i in 1:9){
+  hc.PACF[[i]] = hclust(d.PACF[[i]], method = "complete")
+}
+
+## Create dendrograms
+
+# Euclidean
+
+dend.EUCL = list()
+
+for (i in 1:9){
+  dend.EUCL[[i]] = as.dendrogram(hc.EUCL[[i]])
+}
+
+# ACF
+
+dend.ACF = list()
+
+for (i in 1:9){
+  dend.ACF[[i]] = as.dendrogram(hc.ACF[[i]])
+}
+
+# PACF
+
+dend.PACF = list()
+
+for (i in 1:9){
+  dend.PACF[[i]] = as.dendrogram(hc.PACF[[i]])
+}
+
+```
+
+For Euclidean distance metric, the dendrogram is given below to show the clustering result. 
+
+```{r, echo = FALSE, include = TRUE, message = F}
+## plot dendrogram
+
+# Euclidean
+
+par(mfrow=c(3,3))
+for (i in 1:9) {
+  plot(hc.EUCL[[i]], ylim = c(0, 1.5),
+       cex = 0.5,
+       xlab = "Index of neurons",
+       main = region.names[i])
+  rect.hclust(hc.EUCL[[i]], k = 4, border = 2:5)
+}
+
+```
+
+For ACF-based distance metric, the dendrogram is given below to show the clustering result. 
+
+```{r, echo = FALSE, include = TRUE, message = F}
+
+# ACF
+
+par(mfrow=c(3,3))
+for (i in 1:9) {
+  plot(hc.ACF[[i]], ylim = c(0, 1.5),
+       cex = 0.5,
+       xlab = "Index of neurons",
+       main = region.names[i])
+  rect.hclust(hc.ACF[[i]], k = 4, border = 2:5)
+}
+
+```
+
+For PACF-based distance metric, the dendrogram is given below to show the clustering result. 
+
+```{r, echo = FALSE, include = TRUE, message = F}
+
+# PACF
+
+par(mfrow=c(3,3))
+for (i in 1:9) {
+  plot(hc.PACF[[i]], ylim = c(0, 1.5),
+       cex = 0.5,
+       xlab = "Index of neurons",
+       main = region.names[i])
+  rect.hclust(hc.PACF[[i]], k = 4, border = 2:5)
+}
+
+```
+
+
+Now, we can pick up pretty good clusters. 
+From the dendrogram, we can see the clusters are quite different from each other. 
+Therefore, we can conclude that there are structures among the neurons per brain region. 
+In deep analysis on the clusters can be explored in the future.
+
+
+# Discussion 
+
+For the primary question, the average spike trains show that the means in time period around 25000 is different from other time period. Those, the series is not stationary . 
+We also use both Dickey-Fulley unit root test and Box-Ljung test for stationary. 
+We got p-values are all less than 0.05. It indicates that the average spike trains are stationary. It contradict to what we see from the plots.
+The tests fail to pick up the non-stationary pattern around time point 25000 could possible due to many time points in the data which have constant means except the regions around time point 25000. 
+We also random time segments, in particular those cover regions around 25000. They all indicate stationary from the tests. This may be answered in the future study.
+
+For the secondary question,
+we can pick up pretty good distinct clusters. 
+From the dendrogram, we can see the clusters are quite different from each other. 
+Therefore, we can conclude that there are structures among the neurons per brain region. In deep analysis on the clusters can be explored in the future.

@@ -1,0 +1,103 @@
+---
+title: "AMOD5240 assignment3"
+author: "Kaining Huang"
+date: "11/16/2021"
+output: pdf_document
+---
+
+# Question 1:
+Firstly, we are going to import the data,
+```{r echo = FALSE}
+Business <- read.csv("~/Desktop/Business.csv")
+```
+Then, we are going to understand how our data is grouped,
+```{r echo = FALSE}
+library(datarium)
+library(rstatix)
+startup.business <- group_by(Business,business)
+get_summary_stats(startup.business, startup_costs, type = "mean_sd")
+```
+We will also test if there are outliers, whether or not normal distributed, and homogeneity of variance,
+```{r echo = FALSE}
+identify_outliers(startup.business,startup_costs)
+shapiro_test(startup.business,startup_costs) 
+levene_test(startup.business,startup.business$startup_costs ~ startup.business$business)
+```
+There are no extreme outliers in the sample. By doing shapiro test of normality, we can also state that our data follows normal distribution. From the levene test, we know that our variances are homogeneous.
+We are going to do anova test,
+```{r echo = FALSE}
+anova_test(Business,startup_costs ~ business) # p-value < 0.05, significant difference exists
+tukey_hsd(Business,startup_costs ~ business)
+```
+
+The current study sought to determine whether or not any differences in startup costs from one category of business to another. 60 companies were randomly sampled and assigned to each of 5 different groups: pizzeria (n = 13),
+bakery (n = 11), shoes (n = 10), gift (n=10), pets(n=16). 
+The sample startup costs contained no extreme outliers. A Shapiro-Wilk test demonstrated normality by group and Levene’s test demonstrated homogeneity of variance. A one-way ANOVA revealed that plant growth was significantly different between different treatment groups,
+F(4, 55) = 3.246, p < 0.05, $eta^2$ = 0.19.
+Startup costs increased in the bakery (M = 92091, SD = 38893	) compared
+to the pet (M = 51625, SD =27075).
+Tukey post-hoc analyses revealed that the startup cost difference from the pizzeria and pets
+(-40466, 95% CI [-77121- -3810]) was statistically significant (p < .05), but
+no other group differences were statistically significant.
+
+# Question 2:
+Firstly,we are going to import our data,
+```{r echo = FALSE}
+Mothlure <- read.csv("~/Desktop/Mothlure.csv")
+View(Mothlure)
+```
+Then we are going to understand how our data is grouped,
+```{r echo = FALSE}
+location.lure <- group_by(Mothlure, location, lure)
+get_summary_stats(location.lure, count, type = "mean_sd")
+```
+We will also test if there are outliers, whether or not normal distributed, and homogeneity of variance,
+```{r echo = FALSE}
+identify_outliers(location.lure, count)
+shapiro_test(location.lure, count)
+levene_test(Mothlure, count ~ location*lure)
+```
+There are no extreme outliers in the sample. By doing shapiro test of normality, we can also state that our data follows normal distribution. From the levene test, we know that our variances are homogeneous.
+We are going to do anova test,
+```{r echo = FALSE}
+anova_test(Mothlure, count ~ location*lure)
+model <- lm(count ~ location*lure, data = Mothlure)
+location.grouping <- group_by(Mothlure, location)
+anova_test(location.grouping, count ~ lure, error = model) # differences exist
+library(emmeans)
+emmeans_test(location.grouping, count ~ lure, p.adjust.method = "bonferroni")
+```
+The current study sought to examine the effects of types of lure and location of traps on moth distribution. 1497 moth were catch by traps in 4 different location, each location has 15 traps, 5 of them use chemical lure, 5 are sugar, 5 are scent. The sample contained no extreme outliers. The data was normally distributed and the variances homogenous according to a Shapiro-Wilk s test of nomarlity and Levene test respectively. There was a statistically significant interaction effect between lure and location on moth distribution, F(6, 48) = 7.638, p < 0.01, $eta^2$ = 0.488 Consequently, an analysis of main effects for lure was performed with statistical significance receiving a Bonferroni adjustment. There was a significant difference in mean moth count for chemical F(6, 48) = 1233, p < 0.0001, and scent, F(6, 48) =1244, p < 0.0001,sugar, F(6, 48) =1454, p < 0.0001. located in either ground, lower, middle, top place. All pairwise comparisons were analyzed between the different location groups organized by lure. Moth counts were significantly different between top, ground, and middle for group of (scent, chemical), and scent sugar for (p < 0.05). Also, we find interaction effect between the type of lures and the locations of traps.
+
+# Question 3:
+From the anova test of the location of traps and types of lures, we find interaction exist. To maximize the number of moths scientists can catch, we will analyze the bonferroni table. If we can use sugar as the lure for all the location, then we will use sugar for top, middle, lower and ground. If we would like to apply all types of lure, which are (top, sugar), (middle, sugar),(lower, sugar), (ground, sugar). For location lower, the type of lures does not make significant difference. For location middle, the type of lures does significant difference when the lure is sugar.The difference is greater than that at top and ground.Therefore, we will make the combination to be (middle, sugar), (lower, chemical), (ground, scent), and (top, scent)
+
+# Question 4:
+# a. 
+Firstly, we are going to import the data,
+```{r echo = FALSE}
+`Trick or treater` <- read.csv("~/Desktop/Trick or treater.csv")
+View(`Trick or treater`)
+```
+To verify whether we should apply a linear model on temperature and the trick-or-treaters, we are going to plot the data to visualize it:
+```{r echo = FALSE}
+library(ggplot2)
+ggplot(`Trick or treater`, mapping = aes(x = Temperature.C, y = trickOrTreaters)) + geom_point(shape = 1) +
+labs(y = "TrickorTreaters", x = "Temperature")
+```
+From the chart, we can figure out that temperature and the number of trick or treaters follow the correlation of a linear model.
+
+# b
+Firstly, we are going to summary the model,
+```{r echo = FALSE}
+trick.lm <- lm(`Trick or treater`$trickOrTreaters ~ `Trick or treater`$ Temperature.C, data = `Trick or treater`)
+summary(trick.lm)
+trick.lm$coefficients
+```
+From the summary of the model, now we know some coefficients of the model. The intercept of the model is 2.6833, which means when temperature equals to 0, the number of trick or treaters is expected to be 2.6833. The slope of the model is 3.1239, which implies that for each unit in temperature, the number of trick or treaters is expected to increase or decrease on average by 3.1239.The p-value tells us we are going to reject the null hypothesis that the slope is 0 at $\alpha$ = 0.05. The p-value of the F-statistic tells us the model has explanatory power.
+
+# c
+From the summary of the model, we have figured out that $\beta_{0}$ equals to 2.6833, and $\beta_{1}$ equals to 3.1239, so the model is $\hat{y}$ = 2.6833 + 3.1239x, as long as temperature is forcast to be 10 degree warmer, we expect the number of trick or treaters increasing 31.239.
+
+# d
+From the year 2018, the model starts to return nonsense results. The limitations of using a linear model here include the absence of error. Since the error term usually refers to error such as measurement error, which influence the predicting outcome.Also, a linear model relies on the linearity of the model, but our model is not perfectly linear. Finally, outliers may affect the model as well.
