@@ -2,7 +2,7 @@
 """
 Created on Wed Jun  1 17:31:44 2022
 
-@author: amrit
+@author: amrit, Kaining, Lahul
 """
 
 import re
